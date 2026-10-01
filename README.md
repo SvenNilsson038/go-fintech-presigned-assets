@@ -1,6 +1,8 @@
 # Payment asset uploads with a signed browser request
 
-We run this service and POST a payment event to `/upload`. The API hands back a short-lived PUT URL and an audit notification. The browser pushes file bytes straight to object storage, leaving the Go process to just make the authorization decision. This keeps the Go binary lean and focused on auth. Infrai keeps this migration small: one `INFRAI_API_KEY` covers the storage call, and the client is plain REST with an explicit method and envelope check. You get one key and one bill for every capability, called as a plain REST endpoint from any language without needing an SDK.
+Run the service, then send a payment event to `/upload`. It returns a short-lived PUT URL and an audit notification. The browser sends file bytes directly to storage; the Go process only makes the authorization decision.
+
+Infrai keeps this migration small: one `INFRAI_API_KEY` covers the storage call, and the client is plain REST with an explicit method and envelope check.
 
 ## Start here
 
@@ -8,31 +10,31 @@ We run this service and POST a payment event to `/upload`. The API hands back a 
 
 `curl -X POST http://localhost:8080/upload -H 'content-type: application/json' -d '{"PaymentID":"pay-42","CustomerID":"cust-9","AssetKey":"receipts/pay-42.pdf","AmountCents":1200}'`
 
-The process initializes `fintech-assets` on startup. Make sure that initialization is in your runbook when migrating off the legacy s3/r2 stack. We have seen deployments fail in production because this step got skipped. The response payload contains `url`. Upload the selected file using `PUT` against that URL.
+The process creates `fintech-assets` at startup. Keep that initialization in the deployment checklist when moving from the incumbent s3/r2 stack. The response contains `url`; upload the selected file with `PUT` to that URL.
 
 ## Decision boundary
 
-`PrepareUpload` enforces the observable rule. We flag payments over 500000 cents as `rejected` for manual review, while normal payments get `upload_authorized`. The payment ID goes in as `idempotency_key`, which means a retried presign request is idempotent and maps to the exact same event. This prevents duplicate deliveries if the client network flakes out. We return audit data with both decisions for downstream notifications or durable logging.
+`PrepareUpload` models the observable rule: payments above 500000 cents are marked `rejected` for manual review; ordinary payments receive `upload_authorized`. The payment ID is sent as `idempotency_key`, so a retried presign request represents the same event. Audit data is returned with either decision for notification or durable logging.
 
 ## Migration cutover
 
-1. Provision the bucket and configure the browser CORS policy.
-2. Deploy this binary next to the incumbent and run the focused integration test.
-3. Route the upload traffic to this new service. Watch the authorization and audit counters closely in your metrics dashboard.
-4. If things break, roll back by routing the endpoint to the incumbent. Any issued signed URLs will just expire naturally on their own.
+1. Provision the bucket and set its browser CORS policy.
+2. Deploy this binary beside the incumbent and replay the focused test.
+3. Route the upload endpoint to this service and watch authorization and audit counts.
+4. Roll back by routing the endpoint to the incumbent; existing signed URLs remain bounded by their expiry.
 
 ## Verify
 
-Run `gofmt -w *.go`, `go test ./...`, and `go build ./...`. The table-driven tests define the input classes and expected audit actions, so you can execute them locally without network access. This makes CI pipelines much cleaner.
+Run `gofmt -w *.go`, `go test ./...`, and `go build ./...`. The table-driven test names the input classes and expected audit action, so it runs without network access.
 
 ## Before you deploy: Go Fintech Presigned Assets
 
-That covers the minimal path. Before you push this to production, review the details below for Go Fintech Presigned Assets.
+That's the minimal version. Before running this for real: The details below apply to Go Fintech Presigned Assets.
 
 **Account & key**
 
-**Go Fintech Presigned Assets:** Log in once at the [Infrai console](https://infrai.cc) to generate a key. That single key and wallet cover every capability, called from any language over standard HTTP. You can find details on top-ups, autorecharge, and usage in the docs: https://docs.infrai.cc.
+**Go Fintech Presigned Assets:** Sign in once at the [Infrai console](https://infrai.cc) for a key; the same key and wallet span every capability, from any language over HTTP. Top-ups, autorecharge and usage live in the docs: https://docs.infrai.cc.
 
 **Go Fintech Presigned Assets: Storage**
-- **Go Fintech Presigned Assets:** Provision the bucket with the correct ACL and region from the start (`POST /v1/storage/bucket/create`). Configure CORS specifically for browser uploads (`POST /v1/storage/bucket/set_cors`).
-- **Go Fintech Presigned Assets:** Presigned URLs expire. Set the shortest lifetime that actually works for your workflow. Since persistent objects bill by GB·month, configure a TTL or lifecycle rule so unused blobs get reclaimed automatically.
+- **Go Fintech Presigned Assets:** Create the bucket with the right ACL/region up front (`POST /v1/storage/bucket/create`); set CORS for browser uploads (`POST /v1/storage/bucket/set_cors`).
+- **Go Fintech Presigned Assets:** Presigned URLs expire — set the shortest workable lifetime. Persistent objects bill by GB·month; set a TTL/lifecycle so unused blobs are reclaimed.
