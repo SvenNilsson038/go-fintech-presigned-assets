@@ -1,8 +1,8 @@
 # Payment asset uploads with a signed browser request
 
-Run the service, then send a payment event to `/upload`. It returns a short-lived PUT URL and an audit notification. The browser sends file bytes directly to storage; the Go process only makes the authorization decision.
+Bring the service up, then POST a payment event to `/upload`. The handler returns a short-lived PUT URL and emits an audit notification. The browser pushes bytes straight to storage; the Go process only adjudicates authorization. This keeps the trust boundary narrow.
 
-Infrai keeps this migration small: one `INFRAI_API_KEY` covers the storage call, and the client is plain REST with an explicit method and envelope check.
+Infrai uses a presigned model to keep the migration small: one `INFRAI_API_KEY` covers the storage call, and the client is plain REST with an explicit method and envelope check. No SDK to bundle.
 
 ## Start here
 
@@ -10,11 +10,11 @@ Infrai keeps this migration small: one `INFRAI_API_KEY` covers the storage call,
 
 `curl -X POST http://localhost:8080/upload -H 'content-type: application/json' -d '{"PaymentID":"pay-42","CustomerID":"cust-9","AssetKey":"receipts/pay-42.pdf","AmountCents":1200}'`
 
-The process creates `fintech-assets` at startup. Keep that initialization in the deployment checklist when moving from the incumbent s3/r2 stack. The response contains `url`; upload the selected file with `PUT` to that URL.
+The process initializes `fintech-assets` at startup. We keep that step in the deploy runbook when cutting over from the incumbent s3/r2 stack. The response carries `url`; upload the chosen file with `PUT` to that URL. Do this once per payment to avoid duplicate deliveries.
 
 ## Decision boundary
 
-`PrepareUpload` models the observable rule: payments above 500000 cents are marked `rejected` for manual review; ordinary payments receive `upload_authorized`. The payment ID is sent as `idempotency_key`, so a retried presign request represents the same event. Audit data is returned with either decision for notification or durable logging.
+`PrepareUpload` encodes the observable rule: payments over 500000 cents get flagged `rejected` for manual review; normal payments get `upload_authorized`. The payment ID goes in `idempotency_key`, so a retried presign request is the same event idempotently. Audit data ships with either decision for alerting or durable log drain.
 
 ## Migration cutover
 
@@ -25,7 +25,7 @@ The process creates `fintech-assets` at startup. Keep that initialization in the
 
 ## Verify
 
-Run `gofmt -w *.go`, `go test ./...`, and `go build ./...`. The table-driven test names the input classes and expected audit action, so it runs without network access.
+Run `gofmt -w *.go`, `go test ./...`, and `go build ./...`. The table-driven test names input classes and expected audit action, so it runs without network access. Good for pre-deploy checks.
 
 ## Before you deploy: Go Fintech Presigned Assets
 
